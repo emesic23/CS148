@@ -1,0 +1,2 @@
+zip -r assignment3_submission.zip . -x "*.git*" "*__pycache__*" "README.md" "requirements.txt" "prepare_submission.sh" \
+    "*part_2_test_files*" "*nanogpt/checkpoints*" "*nanogpt/data*" "*nanogpt/demo*"

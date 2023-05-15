@@ -18,7 +18,12 @@ def load_data(data_dir,
     # NOTE: we only add these transformations to the training set, 
     # not to the testing set
     # 
-    train_transform = None
+    train_transform = transforms.Compose([
+        transforms.Pad(4),
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomCrop(32),
+        transforms.ToTensor(),
+    ])
 
     test_transform = transforms.Compose([
         transforms.ToTensor(),
@@ -28,10 +33,16 @@ def load_data(data_dir,
         train_normalize = transforms.Normalize(mean=train_mean, std=train_std)
         
         # TODO: Add the normalizing step to train_transform
-        train_transform = None
+        train_transform = train_transform = transforms.Compose([
+            train_transform,
+            train_normalize
+        ])
         
         # TODO: Add the normalizing step to test_transform
-        test_transform = None
+        test_normalize = transforms.Normalize(mean=train_mean, std=train_std)
+        test_transform = transforms.Compose([
+            test_transform, test_normalize
+        ])
 
 
     # Download the dataset or point to where each set is already downloaded

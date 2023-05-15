@@ -4,6 +4,7 @@ import pandas as pd
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as funcs
 
 DEBUG=False
 
@@ -99,12 +100,25 @@ class Block(nn.Module):
     def __init__(self, out_channels, stride=1):
         super().__init__()
         self.out_channels = out_channels
-        self.kernel_size = None     # TODO: fill in Kernel size for 3x3 convs
-        self.padding = None         # TODO: Add 1-pixel of padding
+        self.kernel_size = 3     # TODO: fill in Kernel size for 3x3 convs
+        self.padding = 1         # TODO: Add 1-pixel of padding
         self.stride = stride        # Set stride to 1 unless otherwise specified
         
         # TODO: Specify the block's functions
-
+        # Specify the block's functions
+        self.conv1 = nn.Sequential(
+                            nn.Conv2d(out_channels//self.stride, out_channels, kernel_size=self.kernel_size, 
+                               stride=self.stride, padding=self.padding, bias=False),
+                            nn.BatchNorm2d(self.out_channels),
+                            nn.ReLU())
+        
+        self.conv2 = nn.Sequential(
+                            nn.Conv2d(out_channels, out_channels, kernel_size=self.kernel_size, 
+                               stride=1, padding=self.padding, bias=False),
+                            nn.BatchNorm2d(self.out_channels))
+        
+        self.gap = nn.AvgPool2d(kernel_size=1, stride=2)
+        
         # TODO: End the layer with a global average-pooling with a stride of 2
 
         # Initialise weights according to the method described in 
@@ -118,39 +132,30 @@ class Block(nn.Module):
     
     # functions added to pass in skip_connections param; otherwise would use nn.Module.forward function
     def skip_connection(self, F, X):
-        '''
-        F (tensor): block input
-        x (tensor): activations of the block before relu
+        if F.shape[1] != X.shape[1]:
+            projection = self.gap(X)
+            padding = torch.zeros((projection.shape[0], F.shape[1] - projection.shape[1], projection.shape[2], projection.shape[3]))
 
-        If dimensions of input x are greater than activations then downsample and
-        zero padding dimension 1 as described by option A in paper.
-        '''
-        # TODO: return the output H(x), where H(x) = F + x.
-        # The dimensions of x and F must be equal in Eqn.(1). 
-        # If this is not the case (e.g., when changing the input/output channels), 
-        # we can perform a linear projection Ws by the shortcut connections 
-        # to match the dimensions (Equation 2) in the paper
-        # HINT: If dimensions do not align, you will need to 
-        #       1.) downsample x, 
-        #       2.) add 0's
-        #       3.) add the downsampled+padded version of X to F
-        return None
+            projection = torch.cat((projection, padding), 1)
+        else:
+            projection = X
+        return F + projection
+
+
 
     def forward(self, X, skip_connections=False):
-        # TODO: compute the convolutions + batch_normalizations + activation functions
-        #       for each layer in the Block
-        # HINT: this should follow directly from the diagram in Fig.2        
-        out = None
+        out = self.conv1(X)
+
+
+        out = self.conv2(out)
+
 
         if skip_connections:
-            # handle this case
-            pass
+            out = self.skip_connection(out, X)
 
-        # Hint: call the nonlinearity before finishing
-        out = None
-
+        out = funcs.relu(out)
+        
         return out
-
 
 class Resnet(nn.Module):
     def __init__(self, N, skip_connections=True, stride=2):
@@ -165,18 +170,23 @@ class Resnet(nn.Module):
         self.relu = nn.ReLU()
 
         # TODO: stack1 - create a modulelist that contains N Blocks with filter_size 16
-        self.stack1 = None
+        self.stack1 = nn.ModuleList([Block(16) for i in range(N)])
 
         # TODO: stack2 - create a Block with filter size 32 with subsampling followed by N-1 blocks without subsampling
-        self.stack2 = None
+        self.stack2 = nn.ModuleList([Block(32, stride=stride)])
+        self.stack2.extend([Block(32) for i in range(N-1)])
 
         # TODO: stack3 - create a Block with filter size 64 with subsampling followed by N-1 blocks without subsampling
-        self.stack3 = None
+        self.stack3 = nn.ModuleList([Block(64, stride=stride)])
+        self.stack3.extend([Block(64) for i in range(N-1)])
 
         # TODO: output: set average pooling function, fully-connected function, and softmax function
         # Average pooling parameters unspecified in the paper (We will use AveragePool2d with a 8x8 kernel)
         # followed by a 10-way fully connected layer. NOTE: we add a bias term to the 10-way fully connected layer.
         # and a logarithmic softmax function
+        self.avgpool = nn.AvgPool2d(kernel_size=8)
+        self.fc = nn.Linear(64, 10)
+        self.logsoftmax = nn.LogSoftmax(dim=1)
 
         # init weights in the fully connected layer
         for m in self.modules():
@@ -191,28 +201,32 @@ class Resnet(nn.Module):
             record_shapes=False,
             with_flops=True
         ) as prof:
-            # TODO: Convolution 1
-            # run input through 3x3 convolutions with batch normalization followed by relu activation
-            out = None
+            # Convolution 1
+            out = self.conv(X)
+            out = self.bn(out)
+            out = self.relu(out)
 
-            # TODO: First layer: Run through the first feature map:
-            out = None
-            
-            # TODO: Run all blocks in the second feature map list
-            out = None
-            
-            # TODO: Run all blocks in the last feature map list
-            out = None
-            
-            # TODO: Finish the network with global average pooling
-            out = None
+            # First layer
+            for block in self.stack1:
+                out = block(out, skip_connections=self.skip_connections)
+
+            # Second layer
+            for block in self.stack2:
+                out = block(out, skip_connections=self.skip_connections)
+
+            # Third layer
+            for block in self.stack3:
+                out = block(out, skip_connections=self.skip_connections)
+
+            # Finish the network with global average pooling
+            out = self.avgpool(out)
             out = out.view(out.size(0), -1)
 
-            # TODO: finish the network with a 10-way fully-connected layer
-            out = None
+            # Finish the network with a 10-way fully-connected layer
+            out = self.fc(out)
 
-            # TODO: and add softmax
-            out = None
+            # Add softmax
+            out = self.logsoftmax(out)
         
         return out
 
